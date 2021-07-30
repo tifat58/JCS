@@ -11,9 +11,15 @@ class Dataset(torch.utils.data.Dataset):
         self.transform = transform
         self.img_list = list()
         self.msk_list = list()
+        dataset_name = 'IDRID'
         with open(osp.join(data_dir, dataset + '.txt'), 'r') as lines:
             for line in lines:
-                line_arr = line.split()
+                if dataset_name == 'IDRID':
+                    line_arr = line.split(',')
+                else:
+                    line_arr = line.split()
+                
+                
                 self.img_list.append(osp.join(data_dir, line_arr[0].strip()))
                 self.msk_list.append(osp.join(data_dir, line_arr[1].strip()))
 
@@ -21,8 +27,10 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.img_list)
 
     def __getitem__(self, idx):
+#         print(self.img_list[idx])
         image = cv2.imread(self.img_list[idx])
         label = cv2.imread(self.msk_list[idx], 0)
+#         print(type(image))
         if self.transform:
             [image, label] = self.transform(image, label)
         return image, label

@@ -112,7 +112,8 @@ def val(args, val_loader, model, criterion):
 
 def train(args, train_loader, model, criterion, optimizer, epoch, max_batches, cur_iter=0):
     # switch to train mode
-    model.eval()
+    # model.eval()
+    model.train()
     sal_eval_train = IoUEval()
     epoch_loss = []
     total_batches = len(train_loader)
@@ -140,6 +141,9 @@ def train(args, train_loader, model, criterion, optimizer, epoch, max_batches, c
         # compute the confusion matrix
         if args.gpu and torch.cuda.device_count() > 1:
            output = gather(output, 0, dim=0)
+        
+        print(output.shape)
+
         with torch.no_grad():
             sal_eval_train.add_batch(output[:, 0, :, :] , target_var)
         if iter % 20 == 0 or iter == len(train_loader) - 1:

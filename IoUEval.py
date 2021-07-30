@@ -35,4 +35,5 @@ class IoUEval:
     def get_metric(self):
         x = self.iou / self.num_images
         y = self.mae / self.num_images
+        print(self.iou, self.mae, self.num_images)
         return x, y
