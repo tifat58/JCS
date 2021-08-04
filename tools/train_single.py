@@ -106,8 +106,10 @@ def val(args, val_loader, model, criterion):
 
     average_epoch_loss_val = sum(epoch_loss) / len(epoch_loss)
     IoU, MAE = sal_eval_val.get_metric()
-
-    return average_epoch_loss_val, IoU, MAE
+    
+    auc_roc_score = sal_eval_val.get_auc_roc()
+    
+    return average_epoch_loss_val, IoU, MAE, auc_roc_score
 
 
 def train(args, train_loader, model, criterion, optimizer, epoch, max_batches, cur_iter=0):
@@ -128,7 +130,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, max_batches, c
             target = target.cuda()
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target).float()
-
+        
         # run the model
         output = model(input_var)
         loss = criterion(output, target_var)
@@ -137,12 +139,13 @@ def train(args, train_loader, model, criterion, optimizer, epoch, max_batches, c
         optimizer.step()
         epoch_loss.append(loss.data.item())
         time_taken = time.time() - start_time
-
+#         print(target.shape, output.shape)
+#         print(output.shape)
         # compute the confusion matrix
         if args.gpu and torch.cuda.device_count() > 1:
            output = gather(output, 0, dim=0)
         
-        print(output.shape)
+       
 
         with torch.no_grad():
             sal_eval_train.add_batch(output[:, 0, :, :] , target_var)
@@ -152,8 +155,10 @@ def train(args, train_loader, model, criterion, optimizer, epoch, max_batches, c
                     loss.data.item(), time_taken))
     average_epoch_loss_train = sum(epoch_loss) / len(epoch_loss)
     IoU, MAE = sal_eval_train.get_metric()
+    
+    auc_roc_score = sal_eval_train.get_auc_roc()
 
-    return average_epoch_loss_train, IoU, MAE, lr
+    return average_epoch_loss_train, IoU, MAE, lr, auc_roc_score
 
 
 def adjust_learning_rate(args, optimizer, epoch, iter, max_batches):
@@ -174,6 +179,7 @@ def adjust_learning_rate(args, optimizer, epoch, iter, max_batches):
 def train_validate_covid(args):
     # load the model
     model = net.JCS(pretrained='model_zoo/5stages_vgg16_bn-6c64b313.pth')
+#     model = net.JCS()
 
     args.savedir = args.savedir + '/'
     # create the directory if not exist
@@ -209,11 +215,11 @@ def train_validate_covid(args):
     ])
 
     trainDataset_scale1 = myTransforms.Compose([
-        myTransforms.Normalize(*NORMALISE_PARAMS),
+#         myTransforms.Normalize(*NORMALISE_PARAMS),
         #myTransforms.Scale(512, 512),
         myTransforms.Scale(352, 352),
-        myTransforms.RandomCropResize(int(7./224.*args.width)),
-        myTransforms.RandomFlip(),
+#         myTransforms.RandomCropResize(int(7./224.*args.width)),
+#         myTransforms.RandomFlip(),
         myTransforms.ToTensor()
     ])
     trainDataset_scale2 = myTransforms.Compose([
@@ -266,8 +272,8 @@ def train_validate_covid(args):
     else:
         logger = open(log_file, 'w')
         logger.write("Parameters: %s" % (str(total_paramters)))
-        logger.write("\n%s\t\t%s\t%s\t%s\t%s\t%s\tlr" % ('Epoch', \
-                'Loss(Tr)', 'IoU (tr)', 'MAE (tr)', 'IoU (val)', 'MAE (val)'))
+        logger.write("\n%s\t\t%s\t%s\t%s\t%s\t%s\t\t%s\t\t%s\t\t%s" % ('Epoch', \
+                'Loss(Tr)', 'IoU (tr)', 'MAE (tr)', 'IoU (val)', 'MAE (val)', 'lr', 'AUC_ROC (tr)', 'AUC_ROC (val)'))
     logger.flush()
 
     optimizer = torch.optim.Adam(model.parameters(), args.lr, (0.9, 0.999), eps=1e-08, weight_decay=1e-4)
@@ -280,13 +286,13 @@ def train_validate_covid(args):
 
     for epoch in range(start_epoch, args.max_epochs):
         # train for one epoch
-        loss_tr, IoU_tr, MAE_tr, lr = \
+        loss_tr, IoU_tr, MAE_tr, lr, auc_roc_tr = \
             train(args, trainLoader_main, model, criteria, optimizer, epoch, max_batches, cur_iter)
         cur_iter += len(trainLoader_main)
         torch.cuda.empty_cache()
 
         # evaluate on validation set
-        loss_val, IoU_val, MAE_val = val(args, valLoader, model, criteria)
+        loss_val, IoU_val, MAE_val, auc_roc_val = val(args, valLoader, model, criteria)
         torch.cuda.empty_cache()
 
         torch.save({
@@ -298,20 +304,23 @@ def train_validate_covid(args):
             'loss_val': loss_val,
             'iou_tr': IoU_tr,
             'iou_val': IoU_val,
-            'lr': lr
+            'lr': lr,
+            'auc_roc_val': auc_roc_val
         }, args.savedir + 'checkpoint.pth.tar')
 
         # save the model also
         model_file_name = args.savedir + '/model_' + str(epoch + 1) + '.pth'
-        if IoU_val > 0.7:
+        
+        
+        if IoU_val > 0.35:
             print("found a good model > 0.7, start to save that!")
             torch.save(model.state_dict(), model_file_name)
 
-        logger.write("\n%d\t\t%.4f\t\t%.4f\t\t%.4f\t\t%.4f\t\t%.4f\t\t%.7f" % (epoch, loss_tr, IoU_tr, MAE_tr, IoU_val, MAE_val, lr))
+        logger.write("\n%d\t\t%.4f\t\t%.4f\t\t%.4f\t\t%.4f\t\t%.4f\t\t%.7f\t\t%.4f\t\t%.4f" % (epoch, loss_tr, IoU_tr, MAE_tr, IoU_val, MAE_val, lr, auc_roc_tr, auc_roc_val))
         logger.flush()
         print("Epoch " + str(epoch) + ': Details')
-        print("\nEpoch No. %d:\tTrain Loss = %.4f\tVal Loss = %.4f\t IoU(tr) = %.4f\t IoU(val) = %.4f" \
-                % (epoch, loss_tr, loss_val, IoU_tr, IoU_val))
+        print("\nEpoch No. %d:\tTrain Loss = %.4f\tVal Loss = %.4f\t IoU(tr) = %.4f\t IoU(val) = %.4f\t AUC_R(tr) = %.4f\t AUC_R (val) = %.4f" \
+                % (epoch, loss_tr, loss_val, IoU_tr, IoU_val, auc_roc_tr, auc_roc_val))
         torch.cuda.empty_cache()
     logger.close()
 
